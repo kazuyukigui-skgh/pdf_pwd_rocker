@@ -1,0 +1,7 @@
+# PDF Locker - 依存パッケージ
+
+# PDF操作（AES暗号化サポート付き）
+pypdf[crypto]>=4.0.0
+
+# exe化ツール（開発時のみ必要）
+pyinstaller>=6.0.0
