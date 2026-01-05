@@ -14,6 +14,13 @@ from pathlib import Path
 from typing import Optional, List
 import threading
 
+# tkinterdnd2のインポート（ドラッグ&ドロップ機能）
+try:
+    from tkinterdnd2 import TkinterDnD, DND_FILES
+    DND_AVAILABLE = True
+except ImportError:
+    DND_AVAILABLE = False
+
 # pypdfのインポート
 try:
     from pypdf import PdfReader, PdfWriter
@@ -115,7 +122,11 @@ class PDFLockerApp:
     """PDF Lockerメインアプリケーション"""
 
     def __init__(self):
-        self.root = tk.Tk()
+        # TkinterDnDが利用可能な場合はそちらを使用（ドラッグ&ドロップ対応）
+        if DND_AVAILABLE:
+            self.root = TkinterDnD.Tk()
+        else:
+            self.root = tk.Tk()
         self.root.title("PDF Locker - PDFパスワード設定ツール")
         self.root.geometry("600x450")
         self.root.minsize(500, 400)
@@ -222,11 +233,121 @@ class PDFLockerApp:
         self.status_label.pack(pady=5)
 
     def _setup_drag_drop(self):
-        """ドラッグ&ドロップの設定（tkinter標準機能）"""
-        # tkinterの標準ドラッグ&ドロップは限定的
-        # Windows/macOSでの完全なD&Dにはtkinterdnd2が必要だが、
-        # exe化時の互換性を考慮してファイル選択ダイアログを主に使用
-        pass
+        """ドラッグ&ドロップの設定"""
+        if not DND_AVAILABLE:
+            # tkinterdnd2が利用できない場合はドラッグ&ドロップ無効
+            self.drop_label.config(
+                text="ファイル選択ボタンをクリックしてPDFを選択\n（ドラッグ&ドロップはtkinterdnd2が必要です）"
+            )
+            return
+
+        # ドロップエリアにドラッグ&ドロップを設定
+        self.drop_frame.drop_target_register(DND_FILES)
+        self.drop_frame.dnd_bind('<<Drop>>', self._on_drop)
+        self.drop_frame.dnd_bind('<<DragEnter>>', self._on_drag_enter)
+        self.drop_frame.dnd_bind('<<DragLeave>>', self._on_drag_leave)
+
+        # ラベルにもドラッグ&ドロップを設定（クリックイベントがラベルで発生するため）
+        self.drop_label.drop_target_register(DND_FILES)
+        self.drop_label.dnd_bind('<<Drop>>', self._on_drop)
+        self.drop_label.dnd_bind('<<DragEnter>>', self._on_drag_enter)
+        self.drop_label.dnd_bind('<<DragLeave>>', self._on_drag_leave)
+
+        # リストボックスにもドラッグ&ドロップを設定
+        self.file_listbox.drop_target_register(DND_FILES)
+        self.file_listbox.dnd_bind('<<Drop>>', self._on_drop)
+        self.file_listbox.dnd_bind('<<DragEnter>>', self._on_drag_enter)
+        self.file_listbox.dnd_bind('<<DragLeave>>', self._on_drag_leave)
+
+    def _on_drag_enter(self, event):
+        """ドラッグがエリアに入った時のビジュアルフィードバック"""
+        self.drop_frame.config(relief="sunken")
+        self.drop_label.config(text="ここにドロップしてください！")
+        return event.action
+
+    def _on_drag_leave(self, event):
+        """ドラッグがエリアから出た時のビジュアルフィードバック"""
+        self.drop_frame.config(relief="solid")
+        self.drop_label.config(
+            text="ここにPDFファイルをドラッグ&ドロップ\nまたは下のボタンでファイルを選択"
+        )
+        return event.action
+
+    def _on_drop(self, event):
+        """ファイルがドロップされた時の処理"""
+        # ビジュアルを元に戻す
+        self.drop_frame.config(relief="solid")
+        self.drop_label.config(
+            text="ここにPDFファイルをドラッグ&ドロップ\nまたは下のボタンでファイルを選択"
+        )
+
+        # ドロップされたファイルを解析
+        files = self._parse_dropped_files(event.data)
+
+        # PDFファイルのみをフィルタリング
+        pdf_files = []
+        non_pdf_files = []
+        for file in files:
+            if file.lower().endswith('.pdf'):
+                pdf_files.append(file)
+            else:
+                non_pdf_files.append(file)
+
+        # PDFファイルを追加
+        added_count = 0
+        for file in pdf_files:
+            if file not in self.selected_files:
+                self.selected_files.append(file)
+                self.file_listbox.insert(tk.END, Path(file).name)
+                added_count += 1
+
+        # ステータスを更新
+        self._update_status()
+
+        # 非PDFファイルがあった場合は警告
+        if non_pdf_files:
+            messagebox.showwarning(
+                "警告",
+                f"PDFファイルではないためスキップしました:\n" +
+                "\n".join([Path(f).name for f in non_pdf_files[:5]]) +
+                (f"\n...他 {len(non_pdf_files) - 5} ファイル" if len(non_pdf_files) > 5 else "")
+            )
+
+        return event.action
+
+    def _parse_dropped_files(self, data: str) -> List[str]:
+        """ドロップされたファイルパスを解析する"""
+        files = []
+        # Windows と Linux/macOS でファイルパスの形式が異なる
+        # Windows: {path1} {path2} または path1 path2
+        # Linux/macOS: path1\npath2 または 'path1' 'path2'
+
+        if '{' in data:
+            # Windowsスタイル: {C:\path\to\file.pdf} {C:\path\to\file2.pdf}
+            import re
+            files = re.findall(r'\{([^}]+)\}', data)
+        elif '\n' in data:
+            # 改行区切り
+            files = [f.strip() for f in data.split('\n') if f.strip()]
+        else:
+            # スペース区切り（パスにスペースがない場合）
+            # または単一ファイル
+            data = data.strip()
+            if ' ' in data and not os.path.exists(data):
+                # 複数ファイルの可能性
+                files = data.split()
+            else:
+                files = [data]
+
+        # ファイルの存在確認とパスのクリーンアップ
+        valid_files = []
+        for f in files:
+            # 前後の引用符を除去
+            f = f.strip().strip('"').strip("'")
+            if os.path.isfile(f):
+                valid_files.append(f)
+
+        return valid_files
 
     def _select_files(self):
         """ファイル選択ダイアログを開く"""

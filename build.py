@@ -49,6 +49,14 @@ def check_dependencies():
         return False
 
     try:
+        import tkinterdnd2
+        print(f"tkinterdnd2 version: {tkinterdnd2.__version__}")
+    except ImportError:
+        print("Warning: tkinterdnd2 is not installed.")
+        print("Drag & drop will be disabled.")
+        print("To enable, run: pip install tkinterdnd2")
+
+    try:
         import PyInstaller
         print(f"PyInstaller version: {PyInstaller.__version__}")
     except ImportError:
@@ -84,6 +92,8 @@ def build_simple():
         "--exclude-module", "pandas",
         "--exclude-module", "scipy",
         "--exclude-module", "PIL",
+        # tkinterdnd2を含める
+        "--collect-all", "tkinterdnd2",
         "pdf_locker.py"
     ]
     result = subprocess.run(cmd, check=True)

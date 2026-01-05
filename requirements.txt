@@ -3,5 +3,8 @@
 # PDF操作（AES暗号化サポート付き）
 pypdf[crypto]>=4.0.0
 
+# ドラッグ&ドロップ機能
+tkinterdnd2>=0.3.0
+
 # exe化ツール（開発時のみ必要）
 pyinstaller>=6.0.0
