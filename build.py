@@ -80,20 +80,30 @@ def build_with_spec():
 def build_simple():
     """シンプルなコマンドでビルド"""
     print("Building with simple command...")
+
+    project_root = Path(__file__).parent
+    hooks_dir = project_root / "hooks"
+
     cmd = [
         sys.executable, "-m", "PyInstaller",
         "--onefile",
         "--windowed",
         "--name", "PDF_Locker",
         "--clean",
+        # hooksディレクトリを指定
+        "--additional-hooks-dir", str(hooks_dir),
         # 不要なモジュールを除外
         "--exclude-module", "matplotlib",
         "--exclude-module", "numpy",
         "--exclude-module", "pandas",
         "--exclude-module", "scipy",
         "--exclude-module", "PIL",
-        # tkinterdnd2を含める
+        # tkinterdnd2を含める（データファイルとサブモジュール）
         "--collect-all", "tkinterdnd2",
+        "--hidden-import", "tkinterdnd2",
+        # pypdfの暗号化関連
+        "--hidden-import", "pypdf._crypt_providers",
+        "--hidden-import", "pypdf._crypt_providers._cryptography",
         "pdf_locker.py"
     ]
     result = subprocess.run(cmd, check=True)

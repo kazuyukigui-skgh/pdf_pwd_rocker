@@ -27,6 +27,8 @@ wheels/
 # PyInstaller
 *.manifest
 *.spec
+# pdf_locker.specはプロジェクトに必要なので追跡する
+!pdf_locker.spec
 
 # Virtual environments
 venv/
