@@ -3,6 +3,7 @@
 PDF Locker PyInstaller spec file
 
 tkinterdnd2を正しくバンドルするための設定を含みます。
+セキュリティソフトの誤検知を軽減するための設定も含みます。
 """
 
 import sys
@@ -23,6 +24,11 @@ except Exception:
     tkdnd_imports = []
 
 block_cipher = None
+
+# Windowsの場合はバージョン情報ファイルを使用
+version_file = None
+if sys.platform == 'win32':
+    version_file = 'version_info.txt'
 
 a = Analysis(
     ['pdf_locker.py'],
@@ -68,7 +74,7 @@ exe = EXE(
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
-    upx=True,
+    upx=False,  # UPX圧縮を無効化（セキュリティソフトの誤検知を軽減）
     upx_exclude=[],
     runtime_tmpdir=None,
     console=False,  # GUIアプリケーションなのでコンソールを非表示
@@ -76,6 +82,7 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
+    version=version_file,  # Windowsバージョン情報を埋め込み
 )
 
 # macOS向けの設定
