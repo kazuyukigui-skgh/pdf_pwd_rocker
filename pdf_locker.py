@@ -11,6 +11,13 @@ AES-256暗号化を使用してPDFファイルにパスワード保護を追加�
 - 保存先は自動（デスクトップの「パスワード付きPDF」フォルダ）
 - パスワードの表示機能付き
 - 優しい日本語のメッセージ
+- Word/Excel/PowerPoint文書も直接対応
+
+対応形式:
+- PDF (.pdf)
+- Word文書 (.docx)
+- Excel表 (.xlsx)
+- PowerPoint資料 (.pptx)
 """
 
 import os
@@ -18,8 +25,10 @@ import sys
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 from pathlib import Path
-from typing import Optional, List
+from typing import Optional, List, Tuple
 import threading
+import tempfile
+import shutil
 
 
 def _setup_tkdnd_path():
@@ -61,6 +70,91 @@ except ImportError:
         "pip install pypdf[crypto] を実行してください。"
     )
     sys.exit(1)
+
+# Office文書変換用ライブラリ
+# docx2pdf（Word用）
+try:
+    from docx2pdf import convert as docx2pdf_convert
+    DOCX2PDF_AVAILABLE = True
+except ImportError:
+    DOCX2PDF_AVAILABLE = False
+
+# comtypes（Excel/PowerPoint用・Windows専用）
+if sys.platform == "win32":
+    try:
+        import comtypes.client
+        COMTYPES_AVAILABLE = True
+    except ImportError:
+        COMTYPES_AVAILABLE = False
+else:
+    COMTYPES_AVAILABLE = False
+
+
+def convert_office_to_pdf(input_path: str, output_path: str) -> Tuple[bool, str]:
+    """
+    Office文書をPDFに変換する
+
+    Args:
+        input_path: 入力ファイルパス（.docx, .xlsx, .pptx）
+        output_path: 出力PDFパス
+
+    Returns:
+        (成功フラグ, エラーメッセージ)
+    """
+    file_ext = Path(input_path).suffix.lower()
+
+    # Word文書の変換
+    if file_ext == '.docx':
+        if DOCX2PDF_AVAILABLE:
+            try:
+                docx2pdf_convert(input_path, output_path)
+                return True, ""
+            except Exception as e:
+                return False, f"Word文書の変換に失敗しました: {str(e)}"
+        else:
+            return False, "Word文書の変換機能が利用できません。\ndocx2pdfライブラリをインストールしてください。"
+
+    # Excel/PowerPointの変換（Windows専用）
+    elif file_ext in ['.xlsx', '.pptx']:
+        if not sys.platform == "win32":
+            return False, "Excel/PowerPoint変換はWindows専用です。"
+
+        if not COMTYPES_AVAILABLE:
+            return False, "Office変換機能が利用できません。\ncomtypesライブラリをインストールしてください。"
+
+        try:
+            if file_ext == '.xlsx':
+                # Excel変換
+                excel = comtypes.client.CreateObject('Excel.Application')
+                excel.Visible = False
+                excel.DisplayAlerts = False
+
+                wb = excel.Workbooks.Open(str(Path(input_path).absolute()))
+                wb.ExportAsFixedFormat(0, str(Path(output_path).absolute()))
+                wb.Close(False)
+                excel.Quit()
+
+                return True, ""
+
+            elif file_ext == '.pptx':
+                # PowerPoint変換
+                powerpoint = comtypes.client.CreateObject('PowerPoint.Application')
+                powerpoint.Visible = 1
+
+                presentation = powerpoint.Presentations.Open(str(Path(input_path).absolute()))
+                presentation.SaveAs(str(Path(output_path).absolute()), 32)  # 32 = ppSaveAsPDF
+                presentation.Close()
+                powerpoint.Quit()
+
+                return True, ""
+
+        except Exception as e:
+            error_msg = str(e)
+            if "Microsoft Office" in error_msg or "Excel" in error_msg or "PowerPoint" in error_msg:
+                return False, f"{file_ext}の変換に失敗しました。\nMicrosoft Officeがインストールされているか確認してください。"
+            return False, f"{file_ext}の変換に失敗しました: {error_msg}"
+
+    return False, f"未対応の形式です: {file_ext}"
 
 
 class PDFLockerApp:
@@ -145,7 +239,7 @@ class PDFLockerApp:
         # 説明文
         instruction = ttk.Label(
             self.step1_frame,
-            text="鍵をかけたいPDFファイルを選んでください",
+            text="鍵をかけたいファイルを選んでください\n（PDF、Word、Excel、PowerPointが使えます）",
             style="Instruction.TLabel",
             justify=tk.CENTER
         )
@@ -174,7 +268,7 @@ class PDFLockerApp:
         # ファイル選択ボタン（大きく）
         select_btn = tk.Button(
             button_area,
-            text="📁 PDFファイルを選ぶ",
+            text="📁 ファイルを選ぶ",
             command=self._select_files,
             font=("Yu Gothic UI", 18, "bold"),
             bg="#4CAF50",
@@ -453,27 +547,73 @@ class PDFLockerApp:
         self._show_step(1)
 
     def _select_files(self):
-        """ファイル選択ダイアログを開く（シンプル版）"""
+        """ファイル選択ダイアログを開く（シンプル版・Office文書対応）"""
         files = filedialog.askopenfilenames(
-            title="PDFファイルを選んでください",
-            filetypes=[("PDFファイル", "*.pdf")]
+            title="ファイルを選んでください",
+            filetypes=[
+                ("対応ファイル", "*.pdf *.docx *.xlsx *.pptx"),
+                ("PDFファイル", "*.pdf"),
+                ("Word文書", "*.docx"),
+                ("Excel表", "*.xlsx"),
+                ("PowerPoint資料", "*.pptx"),
+                ("すべてのファイル", "*.*")
+            ]
         )
 
         if files:
+            # サポートされている拡張子
+            supported_extensions = {'.pdf', '.docx', '.xlsx', '.pptx'}
+            unsupported_files = []
+
             for file in files:
+                file_ext = Path(file).suffix.lower()
+
+                if file_ext not in supported_extensions:
+                    unsupported_files.append(Path(file).name)
+                    continue
+
                 if file not in self.selected_files:
                     self.selected_files.append(file)
-                    self.file_listbox.insert(tk.END, Path(file).name)
+                    # ファイル名とアイコンを表示
+                    display_name = self._get_file_display_name(file)
+                    self.file_listbox.insert(tk.END, display_name)
 
             # 「次へ」ボタンを有効化
-            self.next_btn_step1.config(state=tk.NORMAL)
+            if self.selected_files:
+                self.next_btn_step1.config(state=tk.NORMAL)
 
             # ファイル数をわかりやすく表示
             count = len(self.selected_files)
-            messagebox.showinfo(
-                "ファイルを選びました",
-                f"{count}個のPDFファイルを選びました。\n\n「次へ」ボタンを押してください。"
-            )
+            if count > 0:
+                messagebox.showinfo(
+                    "ファイルを選びました",
+                    f"{count}個のファイルを選びました。\n\n「次へ」ボタンを押してください。"
+                )
+
+            # 非対応ファイルがあった場合は警告
+            if unsupported_files:
+                messagebox.showwarning(
+                    "対応していないファイル",
+                    f"以下のファイルは対応していません:\n\n" +
+                    "\n".join(unsupported_files[:5]) +
+                    (f"\n...他 {len(unsupported_files) - 5} ファイル" if len(unsupported_files) > 5 else "") +
+                    "\n\n対応形式: PDF、Word、Excel、PowerPoint"
+                )
+
+    def _get_file_display_name(self, file_path: str) -> str:
+        """ファイルの表示名を取得（アイコン付き）"""
+        file_ext = Path(file_path).suffix.lower()
+        file_name = Path(file_path).name
+
+        icon_map = {
+            '.pdf': '📄',
+            '.docx': '📝',
+            '.xlsx': '📊',
+            '.pptx': '📽️'
+        }
+
+        icon = icon_map.get(file_ext, '📁')
+        return f"{icon} {file_name}"
 
     def _clear_files(self):
         """ファイルリストをクリア"""
@@ -533,7 +673,7 @@ class PDFLockerApp:
         thread.start()
 
     def _process_files(self, password: str):
-        """ファイルを処理（バックグラウンドスレッド・シンプル版）"""
+        """ファイルを処理（バックグラウンドスレッド・シンプル版・Office文書対応）"""
         # 保存先フォルダを作成（デスクトップに固定）
         output_dir = Path.home() / "Desktop" / "パスワード付きPDF"
         try:
@@ -545,20 +685,63 @@ class PDFLockerApp:
             ))
             return
 
+        # 一時ファイル用ディレクトリ
+        temp_dir = None
+        try:
+            temp_dir = tempfile.mkdtemp()
+        except Exception:
+            pass
+
         total = len(self.selected_files)
         success_count = 0
         error_files = []
         self.output_folder = output_dir  # 完了画面で使用
 
         for i, file_path in enumerate(self.selected_files):
+            pdf_path_to_encrypt = None
+            is_temp_pdf = False
+
             try:
                 file_name = Path(file_path).name
+                file_ext = Path(file_path).suffix.lower()
+
                 self.root.after(0, lambda name=file_name: self.status_var.set(
                     f"処理中: {name}"
                 ))
 
+                # Office文書の場合、まずPDFに変換
+                if file_ext in ['.docx', '.xlsx', '.pptx']:
+                    if temp_dir is None:
+                        error_files.append((file_path, "一時ファイルの作成に失敗しました"))
+                        continue
+
+                    # Word/Excel/PowerPointをPDFに変換
+                    temp_pdf = Path(temp_dir) / f"{Path(file_path).stem}.pdf"
+
+                    # 変換状況をステータスに表示
+                    self.root.after(0, lambda name=file_name: self.status_var.set(
+                        f"PDFに変換中: {name}"
+                    ))
+
+                    success, error_msg = convert_office_to_pdf(file_path, str(temp_pdf))
+
+                    if not success:
+                        error_files.append((file_path, error_msg))
+                        continue
+
+                    pdf_path_to_encrypt = str(temp_pdf)
+                    is_temp_pdf = True
+
+                    # 変換完了後、暗号化処理に移る
+                    self.root.after(0, lambda name=file_name: self.status_var.set(
+                        f"鍵をかけています: {name}"
+                    ))
+                else:
+                    # 既にPDFの場合
+                    pdf_path_to_encrypt = file_path
+
                 # PDFを読み込む
-                reader = PdfReader(file_path)
+                reader = PdfReader(pdf_path_to_encrypt)
 
                 # 既に暗号化されている場合
                 if reader.is_encrypted:
@@ -584,8 +767,10 @@ class PDFLockerApp:
                 )
 
                 # 保存先を決定（デスクトップの「パスワード付きPDF」フォルダ）
+                # 元のファイル名を使用（拡張子はpdfに変更）
                 original_path = Path(file_path)
-                output_path = output_dir / f"鍵付き_{original_path.name}"
+                output_filename = f"鍵付き_{original_path.stem}.pdf"
+                output_path = output_dir / output_filename
 
                 # ファイルを保存
                 with open(output_path, "wb") as f:
@@ -598,11 +783,22 @@ class PDFLockerApp:
             except PermissionError:
                 error_files.append((file_path, "このファイルは開けません（使用中の可能性）"))
             except Exception as e:
-                error_files.append((file_path, "エラーが発生しました"))
+                error_msg = str(e)
+                if "Office" in error_msg or "Excel" in error_msg or "PowerPoint" in error_msg:
+                    error_files.append((file_path, "Office文書の処理に失敗しました"))
+                else:
+                    error_files.append((file_path, "エラーが発生しました"))
 
             # 進捗を更新
             progress = ((i + 1) / total) * 100
             self.root.after(0, lambda p=progress: self.progress_var.set(p))
+
+        # 一時ディレクトリをクリーンアップ
+        if temp_dir and os.path.exists(temp_dir):
+            try:
+                shutil.rmtree(temp_dir)
+            except Exception:
+                pass
 
         # 完了処理
         self.root.after(0, lambda: self._on_process_complete(
