@@ -162,6 +162,64 @@ def convert_office_to_pdf(input_path: str, output_path: str) -> Tuple[bool, str]
     return False, f"未対応の形式です: {file_ext}"
 
 
+def extract_patient_id(filename: str) -> Optional[str]:
+    """
+    ファイル名から患者IDを抽出する
+
+    Args:
+        filename: ファイル名
+
+    Returns:
+        患者ID（7〜10桁の数字）、見つからない場合はNone
+    """
+    import re
+
+    # 患者IDのパターン（7〜10桁の数字）
+    # 例: 12345678, [12345678], 12345678_山田太郎, CT_12345678_20260110
+    pattern = r'\b(\d{7,10})\b'
+
+    match = re.search(pattern, filename)
+    if match:
+        return match.group(1)
+
+    return None
+
+
+def generate_password(patient_id: str, pattern: str, birth_date: str = "") -> str:
+    """
+    患者IDとパターンからパスワードを生成する
+
+    Args:
+        patient_id: 患者ID
+        pattern: パスワードパターン（'id_only', 'birth_only', 'id_mmdd', 'id_yyyymmdd', 'custom'）
+        birth_date: 生年月日（YYYYMMDD形式）
+
+    Returns:
+        生成されたパスワード
+    """
+    if pattern == 'id_only':
+        return patient_id
+
+    elif pattern == 'birth_only':
+        return birth_date
+
+    elif pattern == 'id_mmdd':
+        # 患者ID + 月日（MMDD）
+        if len(birth_date) >= 8:
+            mmdd = birth_date[4:8]  # YYYYMMDD → MMDD
+            return f"{patient_id}-{mmdd}"
+        return patient_id
+
+    elif pattern == 'id_yyyymmdd':
+        # 患者ID + 年月日（YYYYMMDD）
+        if len(birth_date) >= 8:
+            return f"{patient_id}-{birth_date}"
+        return patient_id
+
+    else:  # custom
+        return ""
+
+
 class PDFLockerApp:
     """PDF Lockerメインアプリケーション（シニア向けシンプル版）"""
 
@@ -187,6 +245,11 @@ class PDFLockerApp:
         self.current_step = 1  # 1: ファイル選択, 2: パスワード入力, 3: 完了
         self.selected_files: List[str] = []
         self.password: str = ""
+
+        # 患者ID自動認識関連
+        self.detected_patient_id: Optional[str] = None
+        self.password_pattern: tk.StringVar = tk.StringVar(value='id_mmdd')  # デフォルト: 患者ID + MMDD
+        self.birth_date_input: str = ""
 
         self._create_widgets()
         self._show_step(1)
@@ -318,76 +381,279 @@ class PDFLockerApp:
         self.next_btn_step1.pack(side=tk.RIGHT)
 
     def _create_step2_widgets(self):
-        """ステップ2: パスワード入力画面"""
+        """ステップ2: パスワード生成ルール選択画面"""
+        # スクロール可能にする
+        canvas = tk.Canvas(self.step2_frame, highlightthickness=0)
+        scrollbar = ttk.Scrollbar(self.step2_frame, orient="vertical", command=canvas.yview)
+        scrollable_frame = ttk.Frame(canvas)
+
+        scrollable_frame.bind(
+            "<Configure>",
+            lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
+        )
+
+        canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
+        canvas.configure(yscrollcommand=scrollbar.set)
+
+        canvas.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
+
         # 説明文
         instruction = ttk.Label(
-            self.step2_frame,
-            text="PDFを開くときに必要なパスワードを決めてください",
+            scrollable_frame,
+            text="パスワードの作り方を選んでください",
             style="Instruction.TLabel",
             justify=tk.CENTER
         )
-        instruction.pack(pady=(20, 30))
+        instruction.pack(pady=(10, 20))
 
-        # パスワード入力エリア
-        password_frame = ttk.LabelFrame(
-            self.step2_frame,
-            text="パスワード入力",
-            padding=20
+        # 患者ID表示エリア
+        patient_id_frame = ttk.LabelFrame(
+            scrollable_frame,
+            text="📄 選んだファイル",
+            padding=15
         )
-        password_frame.pack(fill=tk.BOTH, expand=True, pady=(0, 20))
+        patient_id_frame.pack(fill=tk.X, padx=20, pady=(0, 20))
 
-        # パスワード入力欄
+        self.patient_id_label = ttk.Label(
+            patient_id_frame,
+            text="",
+            font=("Yu Gothic UI", 12),
+            justify=tk.LEFT
+        )
+        self.patient_id_label.pack(anchor=tk.W)
+
+        # パスワードパターン選択エリア
+        pattern_frame = ttk.LabelFrame(
+            scrollable_frame,
+            text="パスワードの作り方を選ぶ",
+            padding=15
+        )
+        pattern_frame.pack(fill=tk.X, padx=20, pady=(0, 20))
+
+        # パターン1: 患者ID + MMDD（推奨）
+        pattern1_frame = tk.Frame(pattern_frame, relief="groove", borderwidth=2, bg="#E8F5E9")
+        pattern1_frame.pack(fill=tk.X, pady=5)
+
+        tk.Radiobutton(
+            pattern1_frame,
+            text="パターン1: 患者ID + 生年月日（月日）【推奨】",
+            variable=self.password_pattern,
+            value='id_mmdd',
+            font=("Yu Gothic UI", 13, "bold"),
+            bg="#E8F5E9",
+            activebackground="#E8F5E9",
+            command=self._update_password_preview
+        ).pack(anchor=tk.W, padx=10, pady=5)
+
         ttk.Label(
-            password_frame,
-            text="パスワード（4文字以上）:",
-            font=("Yu Gothic UI", 14)
-        ).pack(anchor=tk.W, pady=(10, 5))
+            pattern1_frame,
+            text="例：12345678-0101\n👍 推奨：セキュリティと使いやすさのバランスが良い",
+            font=("Yu Gothic UI", 11),
+            foreground="#2E7D32",
+            background="#E8F5E9"
+        ).pack(anchor=tk.W, padx=30, pady=(0, 10))
 
-        password_input_frame = ttk.Frame(password_frame)
-        password_input_frame.pack(fill=tk.X, pady=(0, 20))
+        # パターン2: 患者ID + YYYYMMDD
+        pattern2_frame = tk.Frame(pattern_frame, relief="groove", borderwidth=2)
+        pattern2_frame.pack(fill=tk.X, pady=5)
+
+        tk.Radiobutton(
+            pattern2_frame,
+            text="パターン2: 患者ID + 生年月日（年月日）",
+            variable=self.password_pattern,
+            value='id_yyyymmdd',
+            font=("Yu Gothic UI", 12),
+            command=self._update_password_preview
+        ).pack(anchor=tk.W, padx=10, pady=5)
+
+        ttk.Label(
+            pattern2_frame,
+            text="例：12345678-19800101\n👍 最も安全　⚠️ 少し長い",
+            font=("Yu Gothic UI", 10),
+            foreground="#616161"
+        ).pack(anchor=tk.W, padx=30, pady=(0, 10))
+
+        # パターン3: 患者IDのみ
+        pattern3_frame = tk.Frame(pattern_frame, relief="groove", borderwidth=2, bg="#FFF3E0")
+        pattern3_frame.pack(fill=tk.X, pady=5)
+
+        tk.Radiobutton(
+            pattern3_frame,
+            text="パターン3: 患者IDのみ",
+            variable=self.password_pattern,
+            value='id_only',
+            font=("Yu Gothic UI", 12),
+            bg="#FFF3E0",
+            activebackground="#FFF3E0",
+            command=self._update_password_preview
+        ).pack(anchor=tk.W, padx=10, pady=5)
+
+        ttk.Label(
+            pattern3_frame,
+            text="例：12345678\n⚠️ セキュリティが弱いため、院内限定で使用してください",
+            font=("Yu Gothic UI", 10),
+            foreground="#E65100",
+            background="#FFF3E0"
+        ).pack(anchor=tk.W, padx=30, pady=(0, 10))
+
+        # パターン4: 生年月日のみ
+        pattern4_frame = tk.Frame(pattern_frame, relief="groove", borderwidth=2, bg="#FFF3E0")
+        pattern4_frame.pack(fill=tk.X, pady=5)
+
+        tk.Radiobutton(
+            pattern4_frame,
+            text="パターン4: 生年月日のみ",
+            variable=self.password_pattern,
+            value='birth_only',
+            font=("Yu Gothic UI", 12),
+            bg="#FFF3E0",
+            activebackground="#FFF3E0",
+            command=self._update_password_preview
+        ).pack(anchor=tk.W, padx=10, pady=5)
+
+        ttk.Label(
+            pattern4_frame,
+            text="例：19800101\n⚠️ 患者本人が開く場合のみ推奨",
+            font=("Yu Gothic UI", 10),
+            foreground="#E65100",
+            background="#FFF3E0"
+        ).pack(anchor=tk.W, padx=30, pady=(0, 10))
+
+        # パターン5: 自分で決める
+        pattern5_frame = tk.Frame(pattern_frame, relief="groove", borderwidth=2)
+        pattern5_frame.pack(fill=tk.X, pady=5)
+
+        tk.Radiobutton(
+            pattern5_frame,
+            text="パターン5: 自分で決める",
+            variable=self.password_pattern,
+            value='custom',
+            font=("Yu Gothic UI", 12),
+            command=self._update_password_preview
+        ).pack(anchor=tk.W, padx=10, pady=5)
+
+        # 生年月日入力エリア
+        birth_date_frame = ttk.LabelFrame(
+            scrollable_frame,
+            text="生年月日を入力してください（パターン1,2,4で必要）",
+            padding=15
+        )
+        birth_date_frame.pack(fill=tk.X, padx=20, pady=(0, 20))
+
+        input_frame = ttk.Frame(birth_date_frame)
+        input_frame.pack(fill=tk.X)
+
+        ttk.Label(
+            input_frame,
+            text="生年月日:",
+            font=("Yu Gothic UI", 12)
+        ).pack(side=tk.LEFT, padx=(0, 10))
+
+        # 年
+        self.birth_year_entry = tk.Entry(
+            input_frame,
+            font=("Yu Gothic UI", 14),
+            width=6
+        )
+        self.birth_year_entry.pack(side=tk.LEFT, padx=2)
+        self.birth_year_entry.insert(0, "1980")
+        self.birth_year_entry.bind("<KeyRelease>", lambda e: self._update_password_preview())
+
+        ttk.Label(input_frame, text="年", font=("Yu Gothic UI", 12)).pack(side=tk.LEFT, padx=2)
+
+        # 月
+        self.birth_month_entry = tk.Entry(
+            input_frame,
+            font=("Yu Gothic UI", 14),
+            width=4
+        )
+        self.birth_month_entry.pack(side=tk.LEFT, padx=2)
+        self.birth_month_entry.insert(0, "01")
+        self.birth_month_entry.bind("<KeyRelease>", lambda e: self._update_password_preview())
+
+        ttk.Label(input_frame, text="月", font=("Yu Gothic UI", 12)).pack(side=tk.LEFT, padx=2)
+
+        # 日
+        self.birth_day_entry = tk.Entry(
+            input_frame,
+            font=("Yu Gothic UI", 14),
+            width=4
+        )
+        self.birth_day_entry.pack(side=tk.LEFT, padx=2)
+        self.birth_day_entry.insert(0, "01")
+        self.birth_day_entry.bind("<KeyRelease>", lambda e: self._update_password_preview())
+
+        ttk.Label(input_frame, text="日", font=("Yu Gothic UI", 12)).pack(side=tk.LEFT, padx=2)
+
+        # カスタムパスワード入力エリア
+        custom_password_frame = ttk.LabelFrame(
+            scrollable_frame,
+            text="自分で決めたパスワード（パターン5の場合）",
+            padding=15
+        )
+        custom_password_frame.pack(fill=tk.X, padx=20, pady=(0, 20))
 
         self.password_entry = tk.Entry(
-            password_input_frame,
+            custom_password_frame,
             show="●",
             font=("Yu Gothic UI", 16),
             width=30
         )
-        self.password_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 10))
+        self.password_entry.pack(fill=tk.X, pady=(0, 10))
+        self.password_entry.bind("<KeyRelease>", lambda e: self._update_password_preview())
 
         # パスワード表示チェックボックス
         self.show_password_var = tk.BooleanVar()
         show_password_check = tk.Checkbutton(
-            password_frame,
+            custom_password_frame,
             text="パスワードを表示する",
             variable=self.show_password_var,
             command=self._toggle_password_visibility,
-            font=("Yu Gothic UI", 12)
+            font=("Yu Gothic UI", 11)
         )
-        show_password_check.pack(anchor=tk.W, pady=(0, 20))
+        show_password_check.pack(anchor=tk.W)
+
+        # パスワードプレビューエリア
+        preview_frame = ttk.LabelFrame(
+            scrollable_frame,
+            text="💡 プレビュー",
+            padding=15
+        )
+        preview_frame.pack(fill=tk.X, padx=20, pady=(0, 20))
+
+        self.password_preview_label = ttk.Label(
+            preview_frame,
+            text="",
+            font=("Yu Gothic UI", 14, "bold"),
+            foreground="#2196F3"
+        )
+        self.password_preview_label.pack(anchor=tk.W)
 
         # 注意書き
         note = ttk.Label(
-            password_frame,
+            scrollable_frame,
             text="⚠ パスワードは忘れないようにメモしてください\nパスワードを忘れるとPDFが開けなくなります",
             font=("Yu Gothic UI", 11),
             foreground="red",
             justify=tk.LEFT
         )
-        note.pack(anchor=tk.W, pady=10)
+        note.pack(padx=20, pady=10)
 
         # ボタンエリア
         button_area = ttk.Frame(self.step2_frame)
-        button_area.pack(fill=tk.X, pady=20)
+        button_area.pack(side="bottom", fill=tk.X, pady=10, padx=20)
 
         back_btn = tk.Button(
             button_area,
             text="◀ 戻る",
             command=lambda: self._show_step(1),
-            font=("Yu Gothic UI", 14),
+            font=("Yu Gothic UI", 12),
             bg="#9E9E9E",
             fg="white",
             activebackground="#757575",
-            cursor="hand2"
+            cursor="hand2",
+            width=10
         )
         back_btn.pack(side=tk.LEFT)
 
@@ -395,7 +661,7 @@ class PDFLockerApp:
             button_area,
             text="鍵をかける ✓",
             command=self._lock_files,
-            font=("Yu Gothic UI", 16, "bold"),
+            font=("Yu Gothic UI", 14, "bold"),
             bg="#4CAF50",
             fg="white",
             activebackground="#45a049",
@@ -408,7 +674,7 @@ class PDFLockerApp:
         # 進捗バー（初期は非表示）
         self.progress_var = tk.DoubleVar()
         self.progress_bar = ttk.Progressbar(
-            self.step2_frame,
+            scrollable_frame,
             variable=self.progress_var,
             maximum=100,
             length=400
@@ -416,7 +682,7 @@ class PDFLockerApp:
 
         self.status_var = tk.StringVar()
         self.status_label = ttk.Label(
-            self.step2_frame,
+            scrollable_frame,
             textvariable=self.status_var,
             font=("Yu Gothic UI", 12),
             foreground="blue"
@@ -518,7 +784,19 @@ class PDFLockerApp:
             self.step1_frame.pack(fill=tk.BOTH, expand=True)
         elif step == 2:
             self.step2_frame.pack(fill=tk.BOTH, expand=True)
-            self.password_entry.focus_set()
+            # 患者IDと選択したファイルを表示
+            if self.selected_files:
+                first_file = Path(self.selected_files[0]).name
+                if self.detected_patient_id:
+                    self.patient_id_label.config(
+                        text=f"ファイル名: {first_file}\n✅ 患者IDを自動検出: {self.detected_patient_id}"
+                    )
+                else:
+                    self.patient_id_label.config(
+                        text=f"ファイル名: {first_file}\n⚠️ 患者IDが見つかりませんでした（パターン5を使用してください）"
+                    )
+            # パスワードプレビューを更新
+            self._update_password_preview()
         elif step == 3:
             self.step3_frame.pack(fill=tk.BOTH, expand=True)
 
@@ -528,6 +806,35 @@ class PDFLockerApp:
             self.password_entry.config(show="")
         else:
             self.password_entry.config(show="●")
+
+    def _update_password_preview(self):
+        """パスワードプレビューを更新"""
+        pattern = self.password_pattern.get()
+
+        # 生年月日を取得
+        try:
+            year = self.birth_year_entry.get().strip()
+            month = self.birth_month_entry.get().strip().zfill(2)
+            day = self.birth_day_entry.get().strip().zfill(2)
+            birth_date = f"{year}{month}{day}"
+        except:
+            birth_date = ""
+
+        # パスワード生成
+        if pattern == 'custom':
+            # カスタムパスワード
+            preview_text = f"パスワード: {self.password_entry.get() or '（未入力）'}"
+        else:
+            if self.detected_patient_id:
+                password = generate_password(self.detected_patient_id, pattern, birth_date)
+                if password:
+                    preview_text = f"生成されるパスワード: {password}"
+                else:
+                    preview_text = "生年月日を正しく入力してください"
+            else:
+                preview_text = "患者IDが見つかりませんでした"
+
+        self.password_preview_label.config(text=preview_text)
 
     def _open_output_folder(self):
         """出力フォルダを開く"""
@@ -548,6 +855,8 @@ class PDFLockerApp:
         self.password_entry.delete(0, tk.END)
         self.show_password_var.set(False)
         self.progress_var.set(0)
+        self.detected_patient_id = None
+        self.password_pattern.set('id_mmdd')
         self.next_btn_step1.config(state=tk.DISABLED)
         self._show_step(1)
 
@@ -582,6 +891,13 @@ class PDFLockerApp:
                     # ファイル名とアイコンを表示
                     display_name = self._get_file_display_name(file)
                     self.file_listbox.insert(tk.END, display_name)
+
+            # 患者IDを自動抽出（最初のファイルから）
+            if self.selected_files and not self.detected_patient_id:
+                first_file = Path(self.selected_files[0]).name
+                patient_id = extract_patient_id(first_file)
+                if patient_id:
+                    self.detected_patient_id = patient_id
 
             # 「次へ」ボタンを有効化
             if self.selected_files:
@@ -633,25 +949,94 @@ class PDFLockerApp:
                 self.next_btn_step1.config(state=tk.DISABLED)
 
     def _lock_files(self):
-        """選択されたファイルにパスワードを設定（シンプル版）"""
-        # パスワードチェック
-        password = self.password_entry.get().strip()
+        """選択されたファイルにパスワードを設定（シンプル版・患者ID対応）"""
+        # パスワード生成
+        pattern = self.password_pattern.get()
 
-        if not password:
-            messagebox.showwarning(
-                "入力してください",
-                "パスワードを入力してください。"
-            )
-            self.password_entry.focus_set()
-            return
+        if pattern == 'custom':
+            # カスタムパスワード
+            password = self.password_entry.get().strip()
 
-        if len(password) < 4:
-            messagebox.showwarning(
-                "短すぎます",
-                "パスワードは4文字以上にしてください。"
+            if not password:
+                messagebox.showwarning(
+                    "入力してください",
+                    "パスワードを入力してください。"
+                )
+                self.password_entry.focus_set()
+                return
+
+            if len(password) < 4:
+                messagebox.showwarning(
+                    "短すぎます",
+                    "パスワードは4文字以上にしてください。"
+                )
+                self.password_entry.focus_set()
+                return
+        else:
+            # 自動生成パスワード
+            if not self.detected_patient_id:
+                messagebox.showerror(
+                    "エラー",
+                    "患者IDが見つかりませんでした。\n\nパターン5（自分で決める）を選択してください。"
+                )
+                return
+
+            # 生年月日を取得
+            try:
+                year = self.birth_year_entry.get().strip()
+                month = self.birth_month_entry.get().strip().zfill(2)
+                day = self.birth_day_entry.get().strip().zfill(2)
+                birth_date = f"{year}{month}{day}"
+
+                # 生年月日の簡易バリデーション
+                if pattern in ['id_mmdd', 'id_yyyymmdd', 'birth_only']:
+                    if len(year) != 4 or not year.isdigit():
+                        raise ValueError("年は4桁の数字で入力してください")
+                    if len(month) != 2 or not month.isdigit() or int(month) < 1 or int(month) > 12:
+                        raise ValueError("月は1〜12の数字で入力してください")
+                    if len(day) != 2 or not day.isdigit() or int(day) < 1 or int(day) > 31:
+                        raise ValueError("日は1〜31の数字で入力してください")
+            except ValueError as e:
+                messagebox.showwarning(
+                    "入力エラー",
+                    f"生年月日を正しく入力してください。\n\n{str(e)}"
+                )
+                return
+            except:
+                birth_date = ""
+
+            password = generate_password(self.detected_patient_id, pattern, birth_date)
+
+            if not password:
+                messagebox.showwarning(
+                    "入力してください",
+                    "生年月日を正しく入力してください。"
+                )
+                return
+
+        # セキュリティ警告（患者IDのみまたは生年月日のみの場合）
+        if pattern in ['id_only', 'birth_only']:
+            warning_result = messagebox.askyesnocancel(
+                "⚠️ セキュリティ警告",
+                f"選択したパスワード（{pattern}）は安全性が低いため、\n"
+                "以下の場合のみ使用してください：\n\n"
+                "✅ 院内スタッフ間でのやり取り\n"
+                "✅ すぐに削除する一時的なファイル\n"
+                "✅ 他のセキュリティ対策と併用\n\n"
+                "❌ 推奨しない使用方法：\n"
+                "❌ インターネット経由での送信\n"
+                "❌ 患者本人への送付\n"
+                "❌ 他の医療機関への紹介\n\n"
+                "このパスワードで本当によろしいですか？\n\n"
+                "「はい」= このまま続ける\n"
+                "「いいえ」= パターンを変更する\n"
+                "「キャンセル」= 中止する"
             )
-            self.password_entry.focus_set()
-            return
+
+            if warning_result is None:  # キャンセル
+                return
+            elif warning_result is False:  # いいえ
+                return
 
         # 確認メッセージ
         result = messagebox.askyesno(
