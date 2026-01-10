@@ -1,0 +1,10 @@
+# PDF Locker - Webアプリ用依存パッケージ
+#
+# Dockerコンテナで使用する最小限のパッケージ
+# インストール: pip install -r requirements-web.txt
+
+# Webフレームワーク
+streamlit>=1.28.0
+
+# PDF操作（AES暗号化サポート付き）
+pypdf[crypto]>=4.0.0
