@@ -1,8 +1,56 @@
 # PDF Locker
 
-PDFファイルにパスワード保護を追加するローカルツールです。
+PDFファイルにパスワード保護を追加するツールです。
+**デスクトップ版**と**Web版**の両方に対応しています。
 
-## 🎯 誰でも使える、シンプル版にアップデート！
+## 🎯 2つのバージョンから選べます
+
+| バージョン | 用途 | 起動方法 |
+|------------|------|----------|
+| 🖥️ デスクトップ版 | 個人のPCで使う | `python pdf_locker.py` または `.exe` |
+| 🌐 Web版 | 病院内サーバーで複数人で使う | `streamlit run web_app.py` |
+
+---
+
+## 🌐 NEW! Web版（Streamlit）
+
+**ブラウザから使えるWeb版を追加しました！**
+
+病院内のサーバーで動かせば、複数の端末から同時にアクセスできます。
+
+### Web版のメリット
+- ✅ インストール不要（ブラウザだけでOK）
+- ✅ 複数人で同時利用可能
+- ✅ Dockerで簡単デプロイ
+- ✅ サーバー1台で管理
+
+### Web版の起動方法
+
+```bash
+# ローカルで起動
+pip install -r requirements-web.txt
+streamlit run web_app.py
+
+# ブラウザで開く
+# http://localhost:8501
+```
+
+### Dockerで起動（推奨）
+
+```bash
+# イメージをビルド
+docker build -t pdf-locker-web .
+
+# コンテナを起動
+docker run -p 8501:8501 pdf-locker-web
+
+# ブラウザで開く
+# http://localhost:8501
+```
+
+---
+
+## 🖥️ デスクトップ版（従来版）
 
 このツールは**誰でも安心して使える**ように設計されています。
 
@@ -140,8 +188,24 @@ exeファイルには、Pythonランタイムとライブラリが含まれる�
 |------|------|
 | 暗号化方式 | AES-256 |
 | PDFライブラリ | pypdf |
-| GUIフレームワーク | tkinter（Python標準） |
-| パッケージング | PyInstaller |
+| デスクトップGUI | tkinter（Python標準） |
+| WebUI | Streamlit |
+| パッケージング | PyInstaller / Docker |
+
+### アーキテクチャ
+
+```
+pdf_pwd_rock/
+├── core_logic.py      # 共通ロジック（パスワード設定処理）
+├── pdf_locker.py      # デスクトップ版（Tkinter GUI）
+├── web_app.py         # Web版（Streamlit）
+├── Dockerfile         # Docker用設定
+├── requirements.txt   # 全機能用パッケージ
+├── requirements-web.txt # Web版用パッケージ（軽量）
+└── README.md
+```
+
+**ポイント:** `core_logic.py` に共通処理をまとめているので、パスワード設定ルールを変更する場合は1箇所の修正で両方のアプリに反映されます。
 
 ## トラブルシューティング
 
